@@ -8,6 +8,9 @@
   <meta name="description" content="Llevá el seguimiento pediátrico de tus hijos como un profesional: vacunas por país, crecimiento según OMS, citas, medicación y más. 100% privado, funciona offline." />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <link rel="stylesheet" href="css/styles.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -307,7 +310,28 @@
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("sw.js").catch(() => {});
+        navigator.serviceWorker.register("sw.js").then(reg => {
+          // Si hay un SW nuevo esperando, activarlo ya
+          if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+          // Cuando se instala un SW nuevo, recargar al terminar para usar la versión fresca
+          reg.addEventListener("updatefound", () => {
+            const newSw = reg.installing;
+            if (!newSw) return;
+            newSw.addEventListener("statechange", () => {
+              if (newSw.state === "installed" && navigator.serviceWorker.controller) {
+                location.reload();
+              }
+            });
+          });
+        }).catch(() => {});
+
+        // Cuando un SW nuevo toma el control, recargar una vez para servir contenido fresco
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+          if (refreshing) return;
+          refreshing = true;
+          location.reload();
+        });
       });
     }
   </script>
