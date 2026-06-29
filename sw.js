@@ -1,9 +1,9 @@
 /* Service Worker — cache-first para uso offline */
-const CACHE = "saludinfantil-v3";
+const CACHE = "saludinfantil-v4";
 const ASSETS = [
   "./",
   "./index.html",
-  "./landing.html",
+  "./app.html",
   "./manifest.json",
   "./css/styles.css",
   "./css/landing.css",

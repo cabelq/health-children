@@ -65,7 +65,7 @@ Cada esquema muestra estado: pendiente / atrasada / aplicada, con fecha, lote y 
 ## 🚀 Cómo usar
 
 1. Descargá la carpeta `health-children`.
-2. Abrí el archivo **`index.html`** en cualquier navegador moderno.
+2. Abrí el archivo **`index.html`** (landing) en cualquier navegador moderno y hacé click en "Abrir app".
    - Doble click y listo.
    - **O servila con `python -m http.server` para activar la PWA**.
 3. (Opcional) En Chrome, hacé click en "Instalar app" para tenerla como aplicación nativa.
@@ -74,7 +74,8 @@ Cada esquema muestra estado: pendiente / atrasada / aplicada, con fecha, lote y 
 
 ```
 health-children/
-├── index.html                  ← entrada
+├── index.html                  ← landing (entrada pública)
+├── app.html                    ← aplicación (login + dashboards)
 ├── manifest.json               ← PWA manifest
 ├── sw.js                       ← service worker (cache offline)
 ├── README.md

@@ -2,7 +2,7 @@
   "name": "SaludInfantil",
   "short_name": "SaludInfantil",
   "description": "Seguimiento pediátrico familiar: fichas, vacunas, crecimiento OMS, citas y medicación.",
-  "start_url": "./index.html",
+  "start_url": "./app.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
