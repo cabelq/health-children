@@ -1,0 +1,20 @@
+{
+  "name": "SaludInfantil",
+  "short_name": "SaludInfantil",
+  "description": "Seguimiento pediátrico familiar: fichas, vacunas, crecimiento OMS, citas y medicación.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

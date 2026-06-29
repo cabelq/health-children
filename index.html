@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SaludInfantil — Seguimiento Pediátrico Familiar</title>
+  <meta name="theme-color" content="#2563eb" />
+  <meta name="description" content="Llevá el seguimiento pediátrico de tus hijos como un profesional: vacunas por país, crecimiento según OMS, citas, medicación y más. 100% privado, funciona offline." />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <!-- AUTH SCREEN (visible hasta hacer login) -->
+  <section id="auth-screen" hidden>
+    <div class="auth-bg">
+      <svg width="100%" height="100%" viewBox="0 0 1440 800" preserveAspectRatio="xMidYMid slice">
+        <defs>
+          <radialGradient id="g1" cx="20%" cy="30%" r="40%"><stop offset="0%" stop-color="#06b6d4" stop-opacity=".35"/><stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/></radialGradient>
+          <radialGradient id="g2" cx="85%" cy="80%" r="50%"><stop offset="0%" stop-color="#2563eb" stop-opacity=".4"/><stop offset="100%" stop-color="#2563eb" stop-opacity="0"/></radialGradient>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#g1)"/>
+        <rect width="100%" height="100%" fill="url(#g2)"/>
+      </svg>
+    </div>
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <div class="auth-brand">
+          <span class="logo">🩺</span>
+          <h1>Salud<strong>Infantil</strong></h1>
+        </div>
+        <p class="auth-sub" id="auth-sub">Iniciá sesión para acceder a tu familia</p>
+
+        <!-- LOGIN FORM -->
+        <form id="login-form" class="auth-form" hidden>
+          <div class="field">
+            <label>Usuario</label>
+            <input type="text" name="username" required autofocus autocomplete="username" placeholder="Tu nombre de usuario" />
+          </div>
+          <div class="field">
+            <label>Contraseña</label>
+            <input type="password" name="password" required autocomplete="current-password" placeholder="••••••••" />
+          </div>
+          <button type="submit" class="btn primary lg" style="width:100%">Ingresar</button>
+          <div class="auth-error" id="login-error" hidden></div>
+          <p class="auth-switch">¿Sos el primero? <a href="#" id="go-register">Crear cuenta familiar →</a></p>
+        </form>
+
+        <!-- REGISTER FORM -->
+        <form id="register-form" class="auth-form" hidden>
+          <div class="field">
+            <label>Tu nombre *</label>
+            <input type="text" name="displayName" required autofocus placeholder="Ej: María Pérez" />
+          </div>
+          <div class="field">
+            <label>Usuario (para login) *</label>
+            <input type="text" name="username" required autocomplete="username" placeholder="Sin espacios, todo minúscula" />
+          </div>
+          <div class="field">
+            <label>Contraseña *</label>
+            <input type="password" name="password" required minlength="4" autocomplete="new-password" placeholder="Mínimo 4 caracteres" />
+          </div>
+          <button type="submit" class="btn primary lg" style="width:100%">Crear cuenta de administrador</button>
+          <div class="auth-error" id="register-error" hidden></div>
+          <p class="auth-switch">Ya tenés cuenta? <a href="#" id="go-login">← Iniciar sesión</a></p>
+          <p class="hint" style="margin-top:16px">🔒 Tu contraseña se guarda hasheada localmente. No sale del dispositivo.</p>
+        </form>
+
+        <p class="auth-footer"><a href="landing.html">← Volver al inicio</a></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- APP (visible cuando hay sesión) -->
+  <div id="app-container" hidden>
+    <header class="topbar" role="banner">
+      <div class="brand">
+        <span class="logo">🩺</span>
+        <div>
+          <h1 id="app-title">SaludInfantil</h1>
+          <small id="family-name">Seguimiento pediátrico familiar</small>
+        </div>
+      </div>
+      <nav class="tabs" role="tablist" aria-label="Secciones principales">
+        <button class="tab active" data-tab="dashboard" role="tab">Inicio</button>
+        <button class="tab" data-tab="children" role="tab">Niños</button>
+        <button class="tab" data-tab="vaccines" role="tab">Vacunas</button>
+        <button class="tab" data-tab="calendar" role="tab">Calendario</button>
+        <button class="tab" data-tab="growth" role="tab">Crecimiento</button>
+        <button class="tab" data-tab="medications" role="tab">Medicación</button>
+        <button class="tab" data-tab="users" role="tab" data-admin-only>Usuarios</button>
+        <button class="tab" data-tab="news" role="tab">Noticias</button>
+        <button class="tab" data-tab="settings" role="tab">Ajustes</button>
+        <button class="theme-toggle" id="theme-toggle" aria-label="Cambiar tema" title="Cambiar tema">🌙</button>
+      </nav>
+      <div class="user-chip" id="user-chip">
+        <div class="user-avatar" id="user-avatar">?</div>
+        <div class="user-info">
+          <strong id="user-name">—</strong>
+          <small id="user-role">—</small>
+        </div>
+        <button class="btn sm" id="btn-logout" title="Cerrar sesión">⎋</button>
+      </div>
+    </header>
+
+    <main id="app" role="main">
+
+      <!-- DASHBOARD -->
+      <section class="view active" id="view-dashboard" role="tabpanel">
+        <div class="hero">
+          <h2>Hola <span id="user-greeting">👋</span></h2>
+          <p>Acá podés registrar todas las atenciones de tus hijos, controlar vacunas, ver el crecimiento según la <strong>OMS</strong> y recibir recordatorios de citas.</p>
+        </div>
+        <div id="alerts-banner"></div>
+        <div class="grid stats">
+          <div class="card stat"><span class="stat-label">Niños registrados</span><span class="stat-value" id="stat-children">0</span></div>
+          <div class="card stat"><span class="stat-label">Vacunas atrasadas</span><span class="stat-value" id="stat-pending">0</span></div>
+          <div class="card stat"><span class="stat-label">Controles</span><span class="stat-value" id="stat-visits">0</span></div>
+          <div class="card stat"><span class="stat-label">Próxima cita</span><span class="stat-value small" id="stat-next">—</span></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Próximos eventos</h3><small>próximos 60 días</small></div>
+          <div id="upcoming-events" class="list"></div>
+        </div>
+      </section>
+
+      <!-- NIÑOS -->
+      <section class="view" id="view-children" role="tabpanel">
+        <div class="section-head">
+          <h2>Mis niños</h2>
+          <div class="row gap">
+            <div class="search-box"><span class="ico">🔍</span><input type="text" id="search-child" placeholder="Buscar por nombre..." /></div>
+            <button class="btn primary" id="btn-new-child" data-requires="member">+ Agregar niño</button>
+          </div>
+        </div>
+        <div id="children-grid" class="grid cards"></div>
+      </section>
+
+      <!-- VACUNAS -->
+      <section class="view" id="view-vaccines" role="tabpanel">
+        <div class="section-head">
+          <h2>Calendario de vacunación</h2>
+          <div class="row gap">
+            <label>País: <select id="country-select"></select></label>
+            <label>Niño: <select id="vaccine-child"></select></label>
+          </div>
+        </div>
+        <div id="vaccine-schedule" class="card"></div>
+      </section>
+
+      <!-- CALENDARIO -->
+      <section class="view" id="view-calendar" role="tabpanel">
+        <div class="section-head">
+          <h2>Calendario familiar</h2>
+          <div class="row gap">
+            <label>Niño: <select id="calendar-child"><option value="">— Todos —</option></select></label>
+            <button class="btn primary" id="btn-new-appt" data-requires="member">+ Nueva cita</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="cal-nav">
+            <button class="btn sm" id="cal-prev">‹</button>
+            <h3 id="cal-month-label">—</h3>
+            <button class="btn sm" id="cal-next">›</button>
+          </div>
+          <div class="cal-grid" id="cal-grid"></div>
+        </div>
+        <div class="card"><h3>Próximas citas</h3><div id="appt-list" class="list"></div></div>
+      </section>
+
+      <!-- CRECIMIENTO -->
+      <section class="view" id="view-growth" role="tabpanel">
+        <div class="section-head">
+          <h2>Crecimiento (curvas OMS)</h2>
+          <div class="row gap">
+            <label>Niño: <select id="growth-child"></select></label>
+            <button class="btn" id="btn-print-chart">🖨 Imprimir ficha</button>
+            <button class="btn primary" id="btn-new-measure" data-requires="member">+ Registrar medición</button>
+          </div>
+        </div>
+        <div id="growth-alerts"></div>
+        <div class="grid two">
+          <div class="card"><h3>Peso / Edad</h3><canvas id="chart-weight" width="600" height="400"></canvas></div>
+          <div class="card"><h3>Talla / Edad</h3><canvas id="chart-height" width="600" height="400"></canvas></div>
+          <div class="card"><h3>IMC / Edad</h3><canvas id="chart-bmi" width="600" height="400"></canvas></div>
+          <div class="card"><h3>Perímetro cefálico / Edad <small>(hasta 5 años)</small></h3><canvas id="chart-head" width="600" height="400"></canvas></div>
+        </div>
+        <div class="card"><h3>Última medición</h3><div id="latest-measure"></div></div>
+        <div class="card">
+          <h3>Historial</h3>
+          <div class="search-box"><span class="ico">🔍</span><input type="text" id="search-measure" placeholder="Buscar en historial..." /></div>
+          <div id="measure-history" class="list"></div>
+        </div>
+      </section>
+
+      <!-- MEDICACIÓN -->
+      <section class="view" id="view-medications" role="tabpanel">
+        <div class="section-head">
+          <h2>Medicación</h2>
+          <div class="row gap">
+            <label>Niño: <select id="med-child"></select></label>
+            <button class="btn primary" id="btn-new-med" data-requires="member">+ Agregar medicamento</button>
+          </div>
+        </div>
+        <div id="med-list"></div>
+      </section>
+
+      <!-- USUARIOS (solo admin) -->
+      <section class="view" id="view-users" role="tabpanel">
+        <div class="section-head"><h2>Gestión de usuarios</h2></div>
+        <div id="users-content"></div>
+      </section>
+
+      <!-- NOTICIAS -->
+      <section class="view" id="view-news" role="tabpanel">
+        <div class="section-head">
+          <h2>Noticias y actualizaciones</h2>
+          <div class="row gap">
+            <label>País: <select id="news-country"></select></label>
+            <button class="btn" id="btn-refresh-news">↻ Actualizar</button>
+          </div>
+        </div>
+        <div class="grid two">
+          <div class="card"><h3>🌍 OMS — Internacional</h3><div id="news-who" class="list"></div></div>
+          <div class="card"><h3>🩺 Sociedad pediátrica local</h3><div id="news-local" class="list"></div></div>
+        </div>
+        <p class="hint">Fuentes: WHO/OMS y sociedades pediátricas nacionales. Si el proxy RSS no responde, probá actualizar más tarde o entrá directo a la web oficial.</p>
+      </section>
+
+      <!-- AJUSTES -->
+      <section class="view" id="view-settings" role="tabpanel">
+        <h2>Ajustes</h2>
+        <div class="card">
+          <h3>Familia</h3>
+          <div class="field">
+            <label>Nombre de la familia (aparece en el encabezado y al imprimir)</label>
+            <input type="text" id="set-family-name" placeholder="Ej: Familia Pérez" />
+          </div>
+          <div class="field">
+            <label>País por defecto para nuevos niños</label>
+            <select id="set-default-country"></select>
+          </div>
+          <button class="btn primary" id="btn-save-settings">Guardar</button>
+        </div>
+        <div class="card">
+          <h3>Notificaciones</h3>
+          <p class="hint">El navegador te avisa cuando se acerca una vacuna atrasada o una cita próxima.</p>
+          <button class="btn" id="btn-notif">Activar notificaciones del navegador</button>
+          <button class="btn" id="btn-test-notif">Probar notificación</button>
+        </div>
+        <div class="card">
+          <h3>Datos</h3>
+          <div class="row gap">
+            <button class="btn" id="btn-export">⬇ Exportar respaldo (JSON)</button>
+            <label class="btn">⬆ Importar respaldo<input type="file" id="file-import" accept="application/json" hidden /></label>
+            <button class="btn danger" id="btn-clear">🗑 Borrar todos los datos</button>
+          </div>
+          <p class="hint">Los datos quedan guardados localmente en este navegador (SQLite en IndexedDB).</p>
+        </div>
+        <div class="card">
+          <h3>Información</h3>
+          <p>Aplicación de seguimiento pediátrico familiar. Los esquemas de vacunación y curvas de crecimiento son orientativos. Ante cualquier duda, consultá con tu pediatra.</p>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- MODAL GENÉRICO -->
+    <div class="modal-backdrop" id="modal" hidden role="dialog" aria-modal="true">
+      <div class="modal">
+        <div class="modal-head">
+          <h3 id="modal-title">Título</h3>
+          <button class="icon-btn" id="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <div class="modal-body" id="modal-body"></div>
+        <div class="modal-foot" id="modal-foot"></div>
+      </div>
+    </div>
+
+    <!-- LIGHTBOX -->
+    <div class="lightbox" id="lightbox" hidden>
+      <img id="lightbox-img" alt="" />
+    </div>
+
+    <div id="toast" class="toast" hidden role="status"></div>
+  </div>
+
+  <script src="data/vaccines.js"></script>
+  <script src="data/oms.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/children.js"></script>
+  <script src="js/vaccines.js"></script>
+  <script src="js/appointments.js"></script>
+  <script src="js/growth.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/medications.js"></script>
+  <script src="js/users.js"></script>
+  <script src="js/news.js"></script>
+  <script src="js/print.js"></script>
+  <script src="js/notifications.js"></script>
+  <script src="js/theme.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("sw.js").catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>

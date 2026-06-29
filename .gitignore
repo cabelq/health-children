@@ -1,0 +1,45 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node / npm
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Build artifacts
+dist/
+build/
+*.zip
+!vendor/sql-wasm.js
+!vendor/sql-wasm.wasm
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# Logs
+*.log
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Tests / temp
+test-*.js
+*.tmp
+*.bak
