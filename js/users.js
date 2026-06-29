@@ -114,8 +114,6 @@ window.UsersModule = (function () {
                 patch.salt = salt;
               }
               Storage.updateUser(u.id, patch);
-              // También guardar rol explícito (no hay updateUser público, lo hago directo)
-              Storage.updateUserRole(u.id, fd.role);
               App.toast("Usuario actualizado");
             } else {
               await Auth.register({ username: fd.username, displayName: fd.displayName, password: fd.password, role: fd.role });

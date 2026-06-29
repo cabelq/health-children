@@ -518,6 +518,17 @@ const Storage = (function () {
     updateUserRole(id, role) {
       run("UPDATE users SET role=? WHERE id=?", [role, id]);
     },
+    // Actualiza campos arbitrarios del usuario (displayName, role, passwordHash, salt).
+    // Protege columnas que no deben tocarse desde acá: id, username, createdAt, lastLogin.
+    updateUser(id, patch) {
+      const ALLOWED = new Set(["displayName", "role", "passwordHash", "salt"]);
+      const keys = Object.keys(patch || {}).filter(k => ALLOWED.has(k));
+      if (keys.length === 0) return this.getUser(id);
+      const setSql = keys.map(k => `${k}=?`).join(", ");
+      const vals = keys.map(k => patch[k]);
+      run(`UPDATE users SET ${setSql} WHERE id=?`, [...vals, id]);
+      return this.getUser(id);
+    },
     deleteUser(id) {
       run("DELETE FROM users WHERE id=?", [id]);
     },
