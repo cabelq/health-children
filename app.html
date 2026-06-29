@@ -310,10 +310,8 @@
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("sw.js").then(reg => {
-          // Si hay un SW nuevo esperando, activarlo ya
+        navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(reg => {
           if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
-          // Cuando se instala un SW nuevo, recargar al terminar para usar la versión fresca
           reg.addEventListener("updatefound", () => {
             const newSw = reg.installing;
             if (!newSw) return;
@@ -323,9 +321,9 @@
               }
             });
           });
+          reg.update().catch(() => {});
         }).catch(() => {});
 
-        // Cuando un SW nuevo toma el control, recargar una vez para servir contenido fresco
         let refreshing = false;
         navigator.serviceWorker.addEventListener("controllerchange", () => {
           if (refreshing) return;

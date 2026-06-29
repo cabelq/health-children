@@ -353,10 +353,13 @@
 
   <script src="js/landing.js"></script>
   <script>
-    // Registro del Service Worker con manejo de updates (auto-reload al detectar nueva versión)
+    // Registro del Service Worker con manejo robusto de updates
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("sw.js").then(reg => {
+        // updateViaCache: 'none' fuerza al browser a ir SIEMPRE al server
+        // para verificar el contenido de sw.js (evita que la SW vieja
+        // cachee su propio sw.js y bloquee updates).
+        navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(reg => {
           if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
           reg.addEventListener("updatefound", () => {
             const newSw = reg.installing;
@@ -367,6 +370,8 @@
               }
             });
           });
+          // Forzar check de update ya (importante si la SW vieja está activa)
+          reg.update().catch(() => {});
         }).catch(() => {});
         let refreshing = false;
         navigator.serviceWorker.addEventListener("controllerchange", () => {
