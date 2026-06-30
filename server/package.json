@@ -1,0 +1,23 @@
+{
+  "name": "saludinfantil-server",
+  "version": "1.0.0",
+  "description": "Backend de sincronización cifrada para SaludInfantil — server opaco, no descifra nada.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node test/e2e.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "better-sqlite3": "^11.3.0",
+    "jsonwebtoken": "^9.0.2",
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}

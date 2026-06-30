@@ -203,6 +203,27 @@ const Storage = (function () {
     }, PERSIST_DEBOUNCE_MS);
   }
 
+  /**
+   * Lee el blob cifrado (o raw) directamente de IDB, sin descifrar.
+   * Usado por CloudSync para subir al backend sin descifrar.
+   */
+  async function getIdbRawBlob() {
+    return await getIdbValue(IDB_KEY);
+  }
+
+  /**
+   * Reemplaza el blob cifrado en IDB (sin descifrar).
+   * Usado por CloudSync después de un pull del backend.
+   * IMPORTANTE: invalida la DB en memoria para forzar recarga.
+   */
+  async function replaceIdbBlob(blob) {
+    await putIdbValue(IDB_KEY, blob);
+    // Invalidar caché en memoria para que el próximo init() recargue
+    db = null;
+    _ready = null;
+    _encryptionKey = null;  // forzar re-derivación con password
+  }
+
   /** Flush inmediato (para usar antes de cerrar/exportar) */
   async function persistNow() {
     if (_persistDebounce) {
@@ -812,6 +833,8 @@ const Storage = (function () {
       return data;
     },
     persistNow,
+    getIdbRawBlob,
+    replaceIdbBlob,
     clearAll() {
       db.exec(`
         DELETE FROM visits; DELETE FROM measurements; DELETE FROM vaccines;

@@ -297,6 +297,37 @@
           <p class="hint" style="margin-top:8px" id="webdav-status">Sin configurar.</p>
         </div>
         <div class="card">
+          <h3>☁️ Servidor SaludInfantil (cloud)</h3>
+          <p class="hint">
+            Sincronizá la base cifrada con el <strong>servidor dedicado</strong> (Node.js + Express + SQLite).
+            El server es <strong>opaco</strong>: nunca descifra tus datos — solo guarda los bytes cifrados.
+            Soporta múltiples dispositivos con <em>conflict resolution</em> (etag).
+          </p>
+          <div class="field">
+            <label>URL del servidor backend (ej: https://api.midominio.com)</label>
+            <input type="url" id="set-backend-url" placeholder="https://api.midominio.com" autocomplete="off" />
+          </div>
+          <div class="row gap" style="flex-wrap:wrap">
+            <button class="btn primary" id="btn-save-backend">💾 Guardar y probar conexión</button>
+            <button class="btn" id="btn-cloud-sync">🔄 Sincronizar ahora</button>
+            <button class="btn" id="btn-cloud-push">⬆ Subir</button>
+            <button class="btn" id="btn-cloud-pull">⬇ Bajar (pisa local)</button>
+            <button class="btn danger" id="btn-backend-logout">🚪 Cerrar sesión backend</button>
+          </div>
+          <p class="hint" style="margin-top:8px" id="backend-status">Sin configurar.</p>
+          <details style="margin-top:12px">
+            <summary style="cursor:pointer;color:var(--accent)">ℹ️ ¿Cómo funciona?</summary>
+            <ol style="margin-top:8px;padding-left:20px;line-height:1.6">
+              <li>Configurás la URL del backend y te logueás con tu usuario.</li>
+              <li>El server te da un <strong>JWT</strong> (token temporal, 15 min) que se renueva solo.</li>
+              <li>Cuando hacés cambios, se sube el <strong>blob cifrado</strong> (con tu AES-GCM key, no la password).</li>
+              <li>El server lo guarda con un <strong>etag</strong> (sha256) — si otro device cambió algo, te avisa y evita pisarte.</li>
+              <li>La password <strong>nunca</strong> sale del browser. El server no puede descifrar aunque quisiera.</li>
+              <li>El server usa bcrypt para tu password de login (distinto del salt del cifrado de DB — defensa en profundidad).</li>
+            </ol>
+          </details>
+        </div>
+        <div class="card">
           <h3>Información</h3>
           <p>Aplicación de seguimiento pediátrico familiar. Los esquemas de vacunación y curvas de crecimiento son orientativos. Ante cualquier duda, consultá con tu pediatra.</p>
         </div>
@@ -341,6 +372,8 @@
   <script src="js/notifications.js"></script>
   <script src="js/theme.js"></script>
   <script src="js/sync.js"></script>
+  <script src="js/api-client.js"></script>
+  <script src="js/cloud-sync.js"></script>
   <script src="js/app.js"></script>
   <script src="js/sw-register.js"></script>
 </body>

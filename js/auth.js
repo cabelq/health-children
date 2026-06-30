@@ -1,8 +1,10 @@
 /* ============================================================
-   Auth — autenticación local con PBKDF2 y sesiones
+   Auth — autenticación local + sync con backend opcional
    - Hash de password con PBKDF2-SHA256 (100k iteraciones)
    - Sesión en sessionStorage (se cierra al cerrar el navegador)
    - Roles: admin | member | viewer
+   - Backend opcional: si ApiClient.isConfigured(), también
+     autentica contra el server (JWT) y sincroniza la DB.
    ============================================================ */
 window.Auth = (function () {
   const SESSION_KEY = "saludinfantil_session";
@@ -46,43 +48,141 @@ window.Auth = (function () {
 
   /* ---------- API ---------- */
 
-  /** ¿Hay usuarios registrados? */
+  /** ¿Hay usuarios registrados localmente? */
   function hasUsers() {
     return Storage.countUsers() > 0;
   }
 
   /**
-   * Registra el primer usuario (o usuarios adicionales)
-   * @param {string} username
-   * @param {string} displayName
-   * @param {string} password
-   * @param {"admin"|"member"|"viewer"} role
+   * Registra el primer usuario (o usuarios adicionales).
+   * Si ApiClient.isConfigured(), también registra contra el backend.
    */
-  async function register({ username, displayName, password, role = "member" }) {
+  async function register({ username, displayName, password, role = "member", syncWithBackend = null }) {
     if (!username || !displayName || !password) throw new Error("Datos incompletos");
     if (password.length < 4) throw new Error("La contraseña debe tener al menos 4 caracteres");
     if (Storage.getUserByUsername(username)) throw new Error("El usuario ya existe");
+
+    // Si se debe sincronizar con backend (auto: si está configurado)
+    const useBackend = syncWithBackend !== null
+      ? syncWithBackend
+      : (typeof ApiClient !== "undefined" && ApiClient.isConfigured());
+
+    if (useBackend && typeof ApiClient !== "undefined") {
+      try {
+        const r = await ApiClient.register({ username, displayName, password });
+        // Si el server aceptó, también creamos el user local con el mismo id
+        const salt = generateSalt();
+        const passwordHash = await hashPassword(password, salt);
+        const isFirstAdmin = role === "admin" && Storage.countUsers() === 0;
+        if (isFirstAdmin) {
+          await Storage.enableEncryption(password);
+        }
+        return Storage.addUser({
+          id: r.user.id,            // usar el mismo id que el server
+          username,
+          displayName,
+          passwordHash,
+          salt,
+          role,
+        });
+      } catch (e) {
+        // Si falla el server, igual dejamos crear local (modo offline-first)
+        console.warn("[Auth] register en backend falló, registrando solo local:", e.message);
+      }
+    }
+
+    // Modo local-only (sin backend)
     const salt = generateSalt();
     const passwordHash = await hashPassword(password, salt);
-
-    // Si es el primer admin (no había users antes), activar cifrado de la DB
-    // con esta password. La misma password sirve para login y para descifrar.
     const isFirstAdmin = role === "admin" && Storage.countUsers() === 0;
     if (isFirstAdmin) {
       await Storage.enableEncryption(password);
     }
-
     return Storage.addUser({ username, displayName, passwordHash, salt, role });
   }
 
-  /** Intenta login. Devuelve el usuario si OK, null si falla */
+  /**
+   * Intenta login.
+   * Si hay backend configurado, primero valida contra el server (JWT).
+   * Luego desbloquea la DB cifrada local con la password.
+   * Flujo de primera vez con backend:
+   *   1. POST /api/auth/login → JWT
+   *   2. GET /api/database → si hay blob, descargar y reemplazar local
+   *   3. Storage.unlock(blobDescifrado, password) → DB en memoria
+   *   4. Si no hay blob remoto, usar local + upload inicial
+   */
   async function login(username, password) {
+    // 1. Validar contra el backend si está configurado
+    let backendOk = false;
+    if (typeof ApiClient !== "undefined" && ApiClient.isConfigured()) {
+      try {
+        await ApiClient.login({ username, password });
+        backendOk = true;
+      } catch (e) {
+        // Si el server rechaza, igual dejamos intentar offline
+        // (útil si el server está caído pero vos ya tenías sesión local)
+        console.warn("[Auth] backend login falló:", e.message);
+      }
+    }
+
+    // 2. Validar contra el hash local
+    const user = Storage.getUserByUsername(username);
+    if (!user) {
+      if (backendOk) {
+        // Tenemos el user en backend pero no local. Crearlo con un salt nuevo.
+        const salt = generateSalt();
+        const passwordHash = await hashPassword(password, salt);
+        Storage.addUser({
+          username,
+          displayName: ApiClient.getCurrentUser()?.displayName || username,
+          passwordHash,
+          salt,
+          role: ApiClient.getCurrentUser()?.role || "admin",
+        });
+        return await finishLogin(username, password, { createdLocal: true });
+      }
+      return null;
+    }
+    const hash = await hashPassword(password, user.salt);
+    if (hash !== user.passwordHash) {
+      // Si el server validó OK pero el local no, sincronizar el hash local con el del server
+      // (no podemos — server guarda bcrypt, nosotros PBKDF2). Mejor: error claro.
+      if (backendOk) {
+        throw new Error("Credenciales válidas en el server pero inválidas localmente. Contactá al admin.");
+      }
+      return null;
+    }
+
+    return await finishLogin(username, password, { backendOk });
+  }
+
+  async function finishLogin(username, password, { backendOk = false, createdLocal = false } = {}) {
     const user = Storage.getUserByUsername(username);
     if (!user) return null;
-    const hash = await hashPassword(password, user.salt);
-    if (hash !== user.passwordHash) return null;
 
-    // Desbloquear la DB (la cifra si era legacy sin cifrar)
+    // Si hay backend y está autenticado, intentar traer la DB remota
+    let downloadedFromRemote = false;
+    if (backendOk && typeof ApiClient !== "undefined" && ApiClient.isAuthenticated()) {
+      try {
+        const remoteMeta = await ApiClient.headDatabase();
+        if (remoteMeta) {
+          // Hay blob remoto → descargar y reemplazar local
+          const remote = await ApiClient.pullDatabase();
+          if (remote && typeof Storage.replaceIdbBlob === "function") {
+            await Storage.replaceIdbBlob(remote.blob);
+            downloadedFromRemote = true;
+            Storage.setSettings({
+              lastSyncPull: remote.updated,
+              lastRemoteEtag: remote.etag,
+            });
+          }
+        }
+      } catch (e) {
+        console.warn("[Auth] no se pudo traer DB remota:", e.message);
+      }
+    }
+
+    // Desbloquear la DB con la password (la cifra si era legacy sin cifrar)
     try {
       await Storage.unlock(password);
     } catch (e) {
@@ -91,12 +191,20 @@ window.Auth = (function () {
     }
 
     Storage.updateUserLastLogin(user.id);
+
+    // Si acabamos de descargar remoto, no subimos inmediatamente.
+    // Si no había remoto pero sí local, subir la local (primer sync).
+    if (backendOk && !downloadedFromRemote && typeof CloudSync !== "undefined") {
+      CloudSync.push?.().catch(e => console.warn("[Auth] push inicial falló:", e.message));
+    }
+
     const session = {
       userId: user.id,
       username: user.username,
       displayName: user.displayName,
       role: user.role,
       expiresAt: Date.now() + SESSION_DURATION,
+      backend: backendOk,
     };
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
     return getCurrentUser();
@@ -118,10 +226,11 @@ window.Auth = (function () {
     }
   }
 
-  /** Cierra la sesión */
+  /** Cierra la sesión (local + backend) */
   function logout() {
     sessionStorage.removeItem(SESSION_KEY);
     Storage.clearEncryptionKey();
+    if (typeof ApiClient !== "undefined") ApiClient.logout();
   }
 
   /** Extiende la sesión actual (sliding expiration) */
@@ -140,9 +249,15 @@ window.Auth = (function () {
   function canEdit() { return isMember(); }
   function canManageUsers() { return isAdmin(); }
 
+  /** ¿Hay sesión backend activa? */
+  function hasBackendSession() {
+    return typeof ApiClient !== "undefined" && ApiClient.isAuthenticated();
+  }
+
   return {
     register, login, logout, getCurrentUser, refresh, hasUsers,
     isAdmin, isMember, isViewer, canEdit, canManageUsers,
+    hasBackendSession,
     hashPassword, generateSalt,
   };
 })();

@@ -386,6 +386,14 @@
       document.getElementById("btn-sync-pull").onclick = () => this.syncPull();
       this.refreshWebdavStatus();
 
+      // Backend cloud sync
+      document.getElementById("btn-save-backend").onclick = () => this.saveBackend();
+      document.getElementById("btn-cloud-sync").onclick = () => this.cloudSync();
+      document.getElementById("btn-cloud-push").onclick = () => this.cloudPush();
+      document.getElementById("btn-cloud-pull").onclick = () => this.cloudPull();
+      document.getElementById("btn-backend-logout").onclick = () => this.backendLogout();
+      this.refreshBackendStatus();
+
       this.refreshBackupStatus();
     },
 
@@ -463,6 +471,118 @@
           this.toast("Error: " + e.message);
         }
       });
+    },
+
+    /* ---------- Backend cloud sync UI ---------- */
+    refreshBackendStatus() {
+      const urlEl = document.getElementById("set-backend-url");
+      const statusEl = document.getElementById("backend-status");
+      if (!urlEl || !statusEl) return;
+
+      const url = ApiClient.getBaseUrl();
+      const authed = ApiClient.isAuthenticated();
+      const user = ApiClient.getCurrentUser();
+      urlEl.value = url || "";
+
+      if (!url) {
+        statusEl.textContent = "Sin configurar.";
+        statusEl.className = "hint";
+        return;
+      }
+      if (authed && user) {
+        const settings = Storage.getSettings();
+        const lastPush = settings.lastSyncPush;
+        const lastPull = settings.lastSyncPull;
+        const last = lastPush && lastPull
+          ? `Último push: ${new Date(lastPush).toLocaleString("es-AR")} · pull: ${new Date(lastPull).toLocaleString("es-AR")}`
+          : lastPush
+            ? `Último push: ${new Date(lastPush).toLocaleString("es-AR")}`
+            : lastPull
+              ? `Último pull: ${new Date(lastPull).toLocaleString("es-AR")}`
+              : "Conectado. Sin sincronizaciones aún.";
+        statusEl.textContent = `✓ Sesión activa como ${user.username} (${user.role}). ${last}`;
+        statusEl.className = "hint good";
+      } else {
+        statusEl.textContent = `URL configurada. Iniciá sesión desde el login principal.`;
+        statusEl.className = "hint";
+      }
+    },
+
+    async saveBackend() {
+      const url = document.getElementById("set-backend-url").value.trim();
+      ApiClient.setBaseUrl(url);
+      this.toast("URL guardada");
+      this.refreshBackendStatus();
+      if (!url) return;
+      try {
+        await ApiClient.health();
+        this.toast("✓ Servidor reachable");
+      } catch (e) {
+        this.toast("Error: " + e.message);
+      }
+    },
+
+    async cloudSync() {
+      if (!ApiClient.isConfigured()) {
+        return this.toast("Configurá la URL del backend primero");
+      }
+      if (!ApiClient.isAuthenticated()) {
+        return this.toast("Iniciá sesión primero (tu usuario debe existir en el backend)");
+      }
+      try {
+        const result = await CloudSync.sync();
+        const msg = result.action === "pull"
+          ? `✓ Datos descargados del server. Recargando…`
+          : result.action === "push"
+            ? `✓ Datos subidos al server (v${result.version})`
+            : result.action === "conflict"
+              ? `⚠ Conflicto: ${result.code}`
+              : `✓ Sync OK (${result.action || "completado"})`;
+        this.toast(msg);
+        this.refreshBackendStatus();
+        if (result.action === "pull") {
+          setTimeout(() => location.reload(), 1500);
+        }
+      } catch (e) {
+        this.toast("Error en cloud sync: " + e.message);
+      }
+    },
+
+    async cloudPush() {
+      if (!ApiClient.isAuthenticated()) return this.toast("No hay sesión backend activa");
+      this.requirePassword("Confirmá tu identidad para subir al servidor", async () => {
+        try {
+          const result = await CloudSync.push();
+          if (result.action === "conflict") {
+            return this.toast(`⚠ Conflicto: el server cambió (etag ${result.remoteEtag?.slice(0,8)}…). Hacé sync automático para resolver.`);
+          }
+          this.toast(`✓ Subido al server (v${result.version})`);
+          this.refreshBackendStatus();
+        } catch (e) {
+          this.toast("Error: " + e.message);
+        }
+      });
+    },
+
+    async cloudPull() {
+      if (!ApiClient.isAuthenticated()) return this.toast("No hay sesión backend activa");
+      this.requirePassword("Confirmá tu identidad para descargar (pisa los datos locales)", async () => {
+        try {
+          const result = await CloudSync.pull();
+          this.toast(`✓ Descargado (${Math.round(result.size/1024)} KB). Recargando…`);
+          this.refreshBackendStatus();
+          setTimeout(() => location.reload(), 1500);
+        } catch (e) {
+          this.toast("Error: " + e.message);
+        }
+      });
+    },
+
+    async backendLogout() {
+      if (!confirm("¿Cerrar sesión del backend? Los datos locales siguen intactos.")) return;
+      ApiClient.logout();
+      this.toast("Sesión backend cerrada");
+      this.refreshBackendStatus();
     },
 
     /* ---------- Backup helpers ---------- */
