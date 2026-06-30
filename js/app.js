@@ -177,6 +177,10 @@
 
       // Sliding session refresh
       setInterval(() => Auth.refresh(), 30 * 60 * 1000);
+
+      // Auto-backup si está activado
+      const settings = Storage.getSettings();
+      if (settings.autoBackup) this.startAutoBackup();
     },
 
     switchTab(tab) {
@@ -351,33 +355,15 @@
     },
 
     bindSettings() {
-      document.getElementById("btn-export").onclick = () => {
-        const json = Storage.exportJSON();
-        const blob = new Blob([json], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `saludinfantil-backup-${new Date().toISOString().slice(0, 10)}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-        this.toast("Respaldo descargado");
-      };
-      document.getElementById("file-import").onchange = e => {
-        const file = e.target.files[0]; if (!file) return;
-        const reader = new FileReader();
-        reader.onload = ev => {
-          try { Storage.importJSON(ev.target.result); this.toast("Datos importados"); this.refreshAll(); }
-          catch { this.toast("Archivo inválido"); }
-        };
-        reader.readAsText(file);
-      };
-      document.getElementById("btn-clear").onclick = () => {
-        if (confirm("¿Borrar TODOS los datos? Esto incluye usuarios y niños.")) {
-          Storage.clearAll();
-          Auth.logout();
-          location.reload();
-        }
-      };
+      document.getElementById("btn-export").onclick = () => this.exportBackup();
+      document.getElementById("btn-export-encrypted").onclick = () => this.exportEncryptedBackup();
+      document.getElementById("btn-auto-backup").onclick = () => this.toggleAutoBackup();
+      document.getElementById("file-import").onchange = e => this.handleImportBackup(e);
+      document.getElementById("btn-clear").onclick = () => this.requirePassword("¿Borrar TODOS los datos? Esto incluye usuarios y niños.", () => {
+        Storage.clearAll();
+        Auth.logout();
+        location.reload();
+      });
       document.getElementById("modal-close").onclick = () => this.closeModal();
       document.getElementById("modal").addEventListener("click", e => { if (e.target.id === "modal") this.closeModal(); });
       document.getElementById("btn-save-settings").onclick = () => {
@@ -392,6 +378,269 @@
         NotificationsModule.show("🩺 SaludInfantil", "Notificación de prueba.");
         this.toast("Mira la esquina de tu pantalla");
       };
+
+      // WebDAV sync
+      document.getElementById("btn-save-webdav").onclick = () => this.saveWebdav();
+      document.getElementById("btn-sync-now").onclick = () => this.syncNow();
+      document.getElementById("btn-sync-push").onclick = () => this.syncPush();
+      document.getElementById("btn-sync-pull").onclick = () => this.syncPull();
+      this.refreshWebdavStatus();
+
+      this.refreshBackupStatus();
+    },
+
+    /* ---------- WebDAV sync UI ---------- */
+    refreshWebdavStatus() {
+      const cfg = SyncModule.getConfig();
+      const statusEl = document.getElementById("webdav-status");
+      const urlEl = document.getElementById("set-webdav-url");
+      const userEl = document.getElementById("set-webdav-user");
+      const passEl = document.getElementById("set-webdav-pass");
+      if (urlEl) urlEl.value = cfg.url || "";
+      if (userEl) userEl.value = cfg.username || "";
+      if (passEl) passEl.value = cfg.password || "";
+      const settings = Storage.getSettings();
+      if (SyncModule.isConfigured()) {
+        const last = settings.lastSyncPush || settings.lastSyncPull;
+        const lastStr = last ? `Última sync: ${new Date(last).toLocaleString("es-AR")}` : "Configurado. Sin sincronización aún.";
+        statusEl.textContent = `✓ ${lastStr}`;
+        statusEl.className = "hint good";
+      } else {
+        statusEl.textContent = "Sin configurar.";
+        statusEl.className = "hint";
+      }
+    },
+    async saveWebdav() {
+      const url = document.getElementById("set-webdav-url").value.trim();
+      const username = document.getElementById("set-webdav-user").value.trim();
+      const password = document.getElementById("set-webdav-pass").value;
+      Storage.setSettings({ webdav_url: url, webdav_user: username, webdav_pass: password });
+      this.toast("Configuración guardada");
+      this.refreshWebdavStatus();
+      try {
+        await SyncModule.testConnection();
+        this.toast("✓ Conexión exitosa con el servidor");
+      } catch (e) {
+        this.toast("Error: " + e.message);
+      }
+    },
+    async syncNow() {
+      if (!SyncModule.isConfigured()) {
+        this.toast("Configurá el servidor primero");
+        return;
+      }
+      try {
+        const result = await SyncModule.sync();
+        this.toast(`✓ Sync OK (${result.action || "completado"})`);
+        this.refreshWebdavStatus();
+        if (result.action === "pull" || result.size) {
+          // Si bajó datos remotos, recargar la app
+          setTimeout(() => location.reload(), 1500);
+        }
+      } catch (e) {
+        this.toast("Error en sync: " + e.message);
+      }
+    },
+    async syncPush() {
+      this.requirePassword("Confirmá tu identidad para subir al servidor", async () => {
+        try {
+          await Storage.persistNow();
+          await SyncModule.push();
+          this.toast("✓ Datos subidos al servidor");
+          this.refreshWebdavStatus();
+        } catch (e) {
+          this.toast("Error: " + e.message);
+        }
+      });
+    },
+    async syncPull() {
+      this.requirePassword("Confirmá tu identidad para descargar (pisa los datos locales)", async () => {
+        try {
+          const result = await SyncModule.pull();
+          this.toast(`✓ Datos descargados (${Math.round(result.size/1024)} KB). Recargando…`);
+          setTimeout(() => location.reload(), 1500);
+        } catch (e) {
+          this.toast("Error: " + e.message);
+        }
+      });
+    },
+
+    /* ---------- Backup helpers ---------- */
+    exportBackup() {
+      const json = Storage.exportJSON();
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `saludinfantil-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      this.toast("Respaldo descargado");
+    },
+    async exportEncryptedBackup() {
+      const me = Auth.getCurrentUser();
+      if (!me) return;
+      // Re-autenticar para confirmar
+      this.requirePassword("Re-escribí tu contraseña para cifrar el respaldo", async (password) => {
+        try {
+          const json = await Storage.exportEncryptedJSON(password);
+          const blob = new Blob([json], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `saludinfantil-backup-encrypted-${new Date().toISOString().slice(0, 10)}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+          this.toast("Respaldo cifrado descargado");
+        } catch (e) {
+          this.toast("Error: " + e.message);
+        }
+      });
+    },
+    async handleImportBackup(e) {
+      const file = e.target.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async (ev) => {
+        try {
+          const text = ev.target.result;
+          let data = null;
+          try { data = JSON.parse(text); } catch { throw new Error("Archivo no es JSON válido"); }
+
+          if (data.encrypted && data.payload) {
+            // Backup cifrado → pedir password
+            this.requirePassword("Backup cifrado — ingresá tu contraseña", async (password) => {
+              try {
+                await Storage.importJSONAuto(text, password);
+                this.toast("Backup cifrado importado ✓");
+                this.refreshAll();
+              } catch (err) {
+                this.toast("Error: " + err.message);
+              }
+            });
+          } else {
+            // Backup en plano → re-autenticar para confirmar
+            this.requirePassword("Re-escribí tu contraseña para importar (reemplaza todos los datos)", async () => {
+              try {
+                await Storage.importJSONAuto(text);
+                this.toast("Backup importado ✓");
+                this.refreshAll();
+              } catch (err) {
+                this.toast("Error: " + err.message);
+              }
+            });
+          }
+        } catch (err) {
+          this.toast("Error: " + err.message);
+        }
+      };
+      reader.readAsText(file);
+    },
+    refreshBackupStatus() {
+      const settings = Storage.getSettings();
+      const el = document.getElementById("backup-status");
+      const btn = document.getElementById("btn-auto-backup");
+      if (!el || !btn) return;
+      if (settings.lastBackup) {
+        const date = new Date(settings.lastBackup);
+        const days = Math.floor((Date.now() - date.getTime()) / 86400000);
+        el.innerHTML = days === 0
+          ? `✓ Último respaldo: hoy`
+          : days === 1
+            ? `⚠ Último respaldo: ayer`
+            : days < 7
+              ? `⚠ Último respaldo: hace ${days} días`
+              : `❌ Último respaldo: hace ${days} días (recomendamos hacer uno)`;
+        el.className = days < 2 ? "hint good" : days < 7 ? "hint warn" : "hint bad";
+      } else {
+        el.innerHTML = `❌ Nunca se hizo un respaldo. Te recomendamos hacer uno.`;
+        el.className = "hint bad";
+      }
+      btn.textContent = settings.autoBackup ? "⏸ Pausar auto-backup" : "▶ Activar auto-backup (cada 24h)";
+    },
+    toggleAutoBackup() {
+      const settings = Storage.getSettings();
+      const newVal = !settings.autoBackup;
+      Storage.setSettings({ autoBackup: newVal });
+      if (newVal) this.startAutoBackup();
+      else this.stopAutoBackup();
+      this.refreshBackupStatus();
+      this.toast(newVal ? "Auto-backup activado (cada 24h)" : "Auto-backup pausado");
+    },
+    autoBackupInterval: null,
+    startAutoBackup() {
+      this.stopAutoBackup();
+      // Backup silencioso cada 24h. Si pasaron >24h desde el último, hacer uno al inicio.
+      const tick = async () => {
+        try {
+          if (!Storage.hasEncryptionKey()) return;
+          const json = await Storage.exportEncryptedJSONWithKey();
+          const blob = new Blob([json], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `saludinfantil-autobackup-${new Date().toISOString().slice(0, 10)}.json`;
+          a.style.display = "none";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          Storage.setSettings({ lastBackup: new Date().toISOString() });
+          this.refreshBackupStatus();
+        } catch (e) {
+          console.warn("Auto-backup failed:", e.message);
+        }
+      };
+      // Disparar cada 24h
+      this.autoBackupInterval = setInterval(tick, 24 * 60 * 60 * 1000);
+      // Si pasó más de 24h desde el último, hacer uno ahora (silencioso)
+      const settings = Storage.getSettings();
+      if (!settings.lastBackup || (Date.now() - new Date(settings.lastBackup).getTime()) > 24 * 60 * 60 * 1000) {
+        setTimeout(tick, 5000);
+      }
+    },
+    stopAutoBackup() {
+      if (this.autoBackupInterval) {
+        clearInterval(this.autoBackupInterval);
+        this.autoBackupInterval = null;
+      }
+    },
+
+    /* ---------- Re-authentication for sensitive actions ---------- */
+    /**
+     * Pide al usuario re-escribir su contraseña antes de ejecutar una acción sensible.
+     * Si el password es correcto, ejecuta onConfirm(password).
+     */
+    requirePassword(message, onConfirm) {
+      this.openModal({
+        title: "Confirmar identidad",
+        body: `
+          <p class="hint" style="margin-bottom:12px">${esc(message)}</p>
+          <div class="field">
+            <label>Tu contraseña</label>
+            <input type="password" id="reauth-password" autofocus autocomplete="current-password" />
+          </div>
+          <div class="auth-error" id="reauth-error" hidden></div>
+        `,
+        footer: [
+          { label: "Cancelar", class: "btn", action: "close" },
+          { label: "Confirmar", class: "btn primary", action: async () => {
+            const pwd = document.getElementById("reauth-password").value;
+            const errEl = document.getElementById("reauth-error");
+            if (!pwd) { errEl.textContent = "Ingresá tu contraseña"; errEl.hidden = false; return; }
+            // Verificar intentando hacer login
+            const me = Auth.getCurrentUser();
+            if (!me) { this.closeModal(); return; }
+            const verified = await Auth.login(me.username, pwd);
+            if (!verified) {
+              errEl.textContent = "Contraseña incorrecta";
+              errEl.hidden = false;
+              return;
+            }
+            this.closeModal();
+            onConfirm(pwd);
+          }},
+        ],
+      });
     },
   };
 

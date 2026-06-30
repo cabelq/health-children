@@ -733,8 +733,8 @@ const Storage = (function () {
       return JSON.stringify(out, null, 2);
     },
     /**
-     * Exporta los datos cifrados con una password.
-     * Devuelve un string base64 listo para descargar.
+     * Exporta los datos cifrados con una password (para backups portables).
+     * Devuelve un string JSON listo para descargar.
      */
     async exportEncryptedJSON(password) {
       const out = {
@@ -748,6 +748,30 @@ const Storage = (function () {
       return JSON.stringify({
         version: "v4-encrypted",
         encrypted: true,
+        exportedAt: out.exportedAt,
+        payload: cipherB64,
+      }, null, 2);
+    },
+    /**
+     * Exporta los datos cifrados con la CryptoKey en memoria (para auto-backup).
+     * El backup solo se puede restaurar en esta misma sesión/dispositivo
+     * (porque necesita la misma CryptoKey) — útil para auto-backups locales.
+     */
+    async exportEncryptedJSONWithKey() {
+      if (!_encryptionKey) throw new Error("No hay clave de cifrado activa");
+      const out = {
+        version: "v4-encrypted",
+        exportedAt: new Date().toISOString(),
+        children: this.listChildren().map(c => hydrateChild(c)),
+        settings: this.getSettings(),
+      };
+      const plain = JSON.stringify(out);
+      const plainBytes = new TextEncoder().encode(plain);
+      const cipherB64 = await Crypto.encryptBytesWithKeyAsB64(plainBytes, _encryptionKey);
+      return JSON.stringify({
+        version: "v4-encrypted",
+        encrypted: true,
+        encryptedWithSessionKey: true,
         exportedAt: out.exportedAt,
         payload: cipherB64,
       }, null, 2);
@@ -771,9 +795,15 @@ const Storage = (function () {
         throw new Error("Archivo inválido");
       }
       if (data.encrypted && data.payload) {
-        if (!password) throw new Error("Backup cifrado, se requiere contraseña");
-        const plain = await Crypto.decryptTextWithPassword(data.payload, password);
-        data = JSON.parse(plain);
+        if (data.encryptedWithSessionKey) {
+          if (!_encryptionKey) throw new Error("Backup cifrado con clave de sesión. Se requiere la misma sesión activa");
+          const plainBytes = await Crypto.decryptBytesWithKeyFromB64(data.payload, _encryptionKey);
+          data = JSON.parse(new TextDecoder().decode(plainBytes));
+        } else {
+          if (!password) throw new Error("Backup cifrado, se requiere contraseña");
+          const plain = await Crypto.decryptTextWithPassword(data.payload, password);
+          data = JSON.parse(plain);
+        }
       }
       this.clearAll();
       (data.children || []).forEach(c => insertChildFromLegacy(c));

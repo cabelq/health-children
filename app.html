@@ -8,6 +8,7 @@
   <meta name="description" content="Llevá el seguimiento pediátrico de tus hijos como un profesional: vacunas por país, crecimiento según OMS, citas, medicación y más. 100% privado, funciona offline." />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; script-src 'self'; worker-src 'self' blob:;" />
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
@@ -256,12 +257,44 @@
         </div>
         <div class="card">
           <h3>Datos</h3>
-          <div class="row gap">
-            <button class="btn" id="btn-export">⬇ Exportar respaldo (JSON)</button>
+          <div id="backup-status" class="hint warn" style="margin-bottom:8px">Cargando estado…</div>
+          <div class="row gap" style="flex-wrap:wrap">
+            <button class="btn" id="btn-export">⬇ Exportar (sin cifrar)</button>
+            <button class="btn primary" id="btn-export-encrypted">🔒 Exportar respaldo cifrado</button>
             <label class="btn">⬆ Importar respaldo<input type="file" id="file-import" accept="application/json" hidden /></label>
             <button class="btn danger" id="btn-clear">🗑 Borrar todos los datos</button>
           </div>
-          <p class="hint">Los datos quedan guardados localmente en este navegador (SQLite en IndexedDB).</p>
+          <div class="row gap" style="margin-top:8px">
+            <button class="btn sm" id="btn-auto-backup">Activar auto-backup</button>
+          </div>
+          <p class="hint" style="margin-top:8px">
+            Los datos quedan guardados <strong>cifrados con AES-256</strong> localmente en este navegador (SQLite en IndexedDB).
+            La clave se deriva de tu contraseña (PBKDF2, 600k iteraciones). El respaldo cifrado solo se puede
+            abrir con tu contraseña. El respaldo sin cifrar incluye los datos en texto plano.
+          </p>
+        </div>
+        <div class="card">
+          <h3>🔄 Sincronización WebDAV</h3>
+          <p class="hint">Sincronizá la base de datos cifrada con tu propio servidor (Nextcloud, Synology, etc.) para acceder desde varios dispositivos. La DB va cifrada, no se envía en texto plano.</p>
+          <div class="field">
+            <label>URL del servidor (ej: https://cloud.example.com/remote.php/dav/files/usuario)</label>
+            <input type="url" id="set-webdav-url" placeholder="https://..." autocomplete="off" />
+          </div>
+          <div class="field">
+            <label>Usuario</label>
+            <input type="text" id="set-webdav-user" autocomplete="username" />
+          </div>
+          <div class="field">
+            <label>Contraseña / App token</label>
+            <input type="password" id="set-webdav-pass" autocomplete="current-password" />
+          </div>
+          <div class="row gap" style="flex-wrap:wrap">
+            <button class="btn primary" id="btn-save-webdav">💾 Guardar y probar</button>
+            <button class="btn" id="btn-sync-now">🔄 Sincronizar ahora</button>
+            <button class="btn" id="btn-sync-push">⬆ Subir local</button>
+            <button class="btn" id="btn-sync-pull">⬇ Bajar remoto</button>
+          </div>
+          <p class="hint" style="margin-top:8px" id="webdav-status">Sin configurar.</p>
         </div>
         <div class="card">
           <h3>Información</h3>
@@ -307,32 +340,8 @@
   <script src="js/print.js"></script>
   <script src="js/notifications.js"></script>
   <script src="js/theme.js"></script>
+  <script src="js/sync.js"></script>
   <script src="js/app.js"></script>
-  <script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(reg => {
-          if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
-          reg.addEventListener("updatefound", () => {
-            const newSw = reg.installing;
-            if (!newSw) return;
-            newSw.addEventListener("statechange", () => {
-              if (newSw.state === "installed" && navigator.serviceWorker.controller) {
-                location.reload();
-              }
-            });
-          });
-          reg.update().catch(() => {});
-        }).catch(() => {});
-
-        let refreshing = false;
-        navigator.serviceWorker.addEventListener("controllerchange", () => {
-          if (refreshing) return;
-          refreshing = true;
-          location.reload();
-        });
-      });
-    }
-  </script>
+  <script src="js/sw-register.js"></script>
 </body>
 </html>

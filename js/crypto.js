@@ -116,6 +116,16 @@ window.Crypto = (function () {
     return true;
   }
 
+  /** Variante de encryptBytesWithKey que devuelve base64 directamente */
+  async function encryptBytesWithKeyAsB64(plaintext, cryptoKey) {
+    const blob = await encryptBytesWithKey(plaintext, cryptoKey);
+    return toB64(blob);
+  }
+  async function decryptBytesWithKeyFromB64(cipherB64, cryptoKey) {
+    const blob = fromB64(cipherB64);
+    return decryptBytesWithKey(blob, cryptoKey);
+  }
+
   /* ---------- cifrado genérico (para backups, sin clave en memoria) ---------- */
   /** Genera un salt aleatorio en hex (32 chars = 16 bytes) */
   function generateSalt() {
@@ -170,6 +180,8 @@ window.Crypto = (function () {
     importKey,
     encryptBytesWithKey,
     decryptBytesWithKey,
+    encryptBytesWithKeyAsB64,
+    decryptBytesWithKeyFromB64,
     encryptTextWithPassword,
     decryptTextWithPassword,
     isEncrypted,
