@@ -64,6 +64,14 @@ window.Auth = (function () {
     if (Storage.getUserByUsername(username)) throw new Error("El usuario ya existe");
     const salt = generateSalt();
     const passwordHash = await hashPassword(password, salt);
+
+    // Si es el primer admin (no había users antes), activar cifrado de la DB
+    // con esta password. La misma password sirve para login y para descifrar.
+    const isFirstAdmin = role === "admin" && Storage.countUsers() === 0;
+    if (isFirstAdmin) {
+      await Storage.enableEncryption(password);
+    }
+
     return Storage.addUser({ username, displayName, passwordHash, salt, role });
   }
 
@@ -73,6 +81,15 @@ window.Auth = (function () {
     if (!user) return null;
     const hash = await hashPassword(password, user.salt);
     if (hash !== user.passwordHash) return null;
+
+    // Desbloquear la DB (la cifra si era legacy sin cifrar)
+    try {
+      await Storage.unlock(password);
+    } catch (e) {
+      console.warn("[Auth] unlock failed:", e.message);
+      return null;
+    }
+
     Storage.updateUserLastLogin(user.id);
     const session = {
       userId: user.id,
@@ -104,6 +121,7 @@ window.Auth = (function () {
   /** Cierra la sesión */
   function logout() {
     sessionStorage.removeItem(SESSION_KEY);
+    Storage.clearEncryptionKey();
   }
 
   /** Extiende la sesión actual (sliding expiration) */

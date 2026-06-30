@@ -1,13 +1,16 @@
 /* ============================================================
-   Storage v3 — SQLite embebido (sql.js) con persistencia en IndexedDB
-   - DB en memoria (rápida), serializada a IndexedDB tras cada cambio
-   - API pública idéntica a versiones anteriores
+   Storage v4 — SQLite embebido (sql.js) con persistencia cifrada
+   - DB en memoria (rápida), cifrada con AES-GCM antes de persistir
+   - Clave derivada de la password del admin con PBKDF2-SHA256 600k
    - Migración automática desde localStorage v2 si existe
+   - Migración transparente DB sin cifrar → cifrada en primer login
    ============================================================ */
 const Storage = (function () {
   const IDB_NAME = "saludinfantil_idb";
   const IDB_STORE = "sqlite_blobs";
   const IDB_KEY = "main_db";
+  const IDB_SALT_KEY = "db_salt";
+  const SESSION_KEY_KEY = "saludinfantil_dbkey";
   const LEGACY_KEY = "saludinfantil_v2";
   const SQLJS_LOCAL = "vendor/sql-wasm.js";
   const SQLJS_WASM_LOCAL = "vendor/sql-wasm.wasm";
@@ -16,6 +19,9 @@ const Storage = (function () {
   let db = null;
   let SQL = null;
   let _ready = null;
+  let _encryptionKey = null; // CryptoKey en memoria
+  let _persistDebounce = null;
+  const PERSIST_DEBOUNCE_MS = 250;
 
   function uid() {
     return "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -55,15 +61,43 @@ const Storage = (function () {
         throw e;
       }
 
-      // Cargar DB existente o crear nueva
-      const buf = await loadFromIDB();
-      db = new SQL.Database(buf || undefined);
-      createSchema();
+      // Intentar cargar clave de cifrado desde sessionStorage
+      await loadEncryptionKeyFromSession();
 
-      // Si es nueva, migrar desde localStorage v2
-      if (!buf) await migrateFromLocalStorage();
+      // Cargar DB existente (puede ser cifrada o no)
+      let buf;
+      try {
+        buf = await loadFromIDB();
+      } catch (e) {
+        // Si el blob está cifrado y no tenemos clave, loadFromIDB devuelve null
+        console.warn("[Storage] No se pudo cargar DB (puede estar cifrada sin clave):", e.message);
+        buf = null;
+      }
+
+      if (buf) {
+        db = new SQL.Database(buf);
+        createSchema();
+      } else {
+        // DB vacía (primera vez, o sin clave para descifrar)
+        db = new SQL.Database();
+        createSchema();
+        // Si hay datos legacy en localStorage, migrar
+        await migrateFromLocalStorage();
+      }
     })();
     return _ready;
+  }
+
+  /** Lee la clave cacheada de sessionStorage (para auto-unlock en reload) */
+  async function loadEncryptionKeyFromSession() {
+    try {
+      const b64 = sessionStorage.getItem(SESSION_KEY_KEY);
+      if (!b64) return false;
+      _encryptionKey = await Crypto.importKey(b64);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /* ---------- IndexedDB persistence ---------- */
@@ -76,18 +110,52 @@ const Storage = (function () {
     });
   }
 
+  async function getIdbValue(key) {
+    const idb = await openIDB();
+    return new Promise((resolve, reject) => {
+      const tx = idb.transaction(IDB_STORE, "readonly");
+      const req = tx.objectStore(IDB_STORE).get(key);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function putIdbValue(key, value) {
+    const idb = await openIDB();
+    return new Promise((resolve, reject) => {
+      const tx = idb.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).put(value, key);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  async function deleteIdbValue(key) {
+    const idb = await openIDB();
+    return new Promise((resolve, reject) => {
+      const tx = idb.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).delete(key);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
   async function loadFromIDB() {
     try {
-      const idb = await openIDB();
-      return await new Promise((resolve, reject) => {
-        const tx = idb.transaction(IDB_STORE, "readonly");
-        const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
-        req.onsuccess = () => resolve(req.result || null);
-        req.onerror = () => reject(req.error);
-      });
+      const blob = await getIdbValue(IDB_KEY);
+      if (!blob) return null;
+
+      if (Crypto.isEncrypted(blob)) {
+        if (!_encryptionKey) {
+          throw new Error("DB_CIFRADA_SIN_CLAVE");
+        }
+        return await Crypto.decryptBytesWithKey(blob, _encryptionKey);
+      }
+
+      // DB sin cifrar (legacy) → devolver directamente
+      return blob;
     } catch (e) {
-      console.warn("IDB load failed:", e);
-      return null;
+      if (e.message === "DB_CIFRADA_SIN_CLAVE") throw e;
+      console.warn("[Storage] loadFromIDB:", e.message);
+      throw e;
     }
   }
 
@@ -95,19 +163,35 @@ const Storage = (function () {
     if (!db) return;
     try {
       const data = db.export();
-      const idb = await openIDB();
-      await new Promise((resolve, reject) => {
-        const tx = idb.transaction(IDB_STORE, "readwrite");
-        tx.objectStore(IDB_STORE).put(data, IDB_KEY);
-        tx.oncomplete = resolve;
-        tx.onerror = () => reject(tx.error);
-      });
+      let blobToSave;
+      if (_encryptionKey) {
+        blobToSave = await Crypto.encryptBytesWithKey(data, _encryptionKey);
+      } else {
+        blobToSave = data;
+      }
+      await putIdbValue(IDB_KEY, blobToSave);
     } catch (e) {
-      console.warn("IDB save failed:", e);
+      console.warn("[Storage] saveToIDB failed:", e);
     }
   }
 
-  function persist() { saveToIDB(); }
+  /** Persist con debounce para evitar serializar en cada micro-cambio */
+  function persist() {
+    if (_persistDebounce) clearTimeout(_persistDebounce);
+    _persistDebounce = setTimeout(() => {
+      _persistDebounce = null;
+      saveToIDB();
+    }, PERSIST_DEBOUNCE_MS);
+  }
+
+  /** Flush inmediato (para usar antes de cerrar/exportar) */
+  async function persistNow() {
+    if (_persistDebounce) {
+      clearTimeout(_persistDebounce);
+      _persistDebounce = null;
+    }
+    await saveToIDB();
+  }
 
   /* ---------- Schema ---------- */
   function createSchema() {
@@ -337,6 +421,84 @@ const Storage = (function () {
   return {
     init,
 
+    /* ---------- Encryption lifecycle ---------- */
+    /** ¿Hay una clave de cifrado activa en memoria? */
+    hasEncryptionKey() { return !!_encryptionKey; },
+
+    /** ¿La DB persistida está cifrada? */
+    async isDBEncrypted() {
+      const blob = await getIdbValue(IDB_KEY);
+      return blob ? Crypto.isEncrypted(blob) : false;
+    },
+
+    /** Lee el salt actual (hex) o null si no existe */
+    async getSalt() {
+      return await getIdbValue(IDB_SALT_KEY);
+    },
+
+    /** Guarda el salt (usado al primer registro / primera activación de cifrado) */
+    async setSalt(saltHex) {
+      await putIdbValue(IDB_SALT_KEY, saltHex);
+    },
+
+    /**
+     * Activa el cifrado. Deriva la clave desde la password + salt (genera uno si no hay).
+     * Si ya había DB cargada sin cifrar, la cifra y la persiste.
+     */
+    async enableEncryption(password) {
+      let saltHex = await getIdbValue(IDB_SALT_KEY);
+      if (!saltHex) {
+        saltHex = Crypto.generateSalt();
+        await putIdbValue(IDB_SALT_KEY, saltHex);
+      }
+      const key = await Crypto.deriveKey(password, saltHex);
+      _encryptionKey = key;
+      // Cachear en sessionStorage
+      try {
+        const b64 = await Crypto.exportKey(key);
+        sessionStorage.setItem(SESSION_KEY_KEY, b64);
+      } catch {}
+      // Si había DB sin cifrar en memoria, cifrarla y guardarla
+      if (db) {
+        const data = db.export();
+        const encrypted = await Crypto.encryptBytesWithKey(data, key);
+        await putIdbValue(IDB_KEY, encrypted);
+      }
+      return true;
+    },
+
+    /**
+     * Intenta desbloquear la DB cifrada con la password.
+     * Lanza error si la password no es correcta.
+     */
+    async unlock(password) {
+      let saltHex = await getIdbValue(IDB_SALT_KEY);
+      if (!saltHex) throw new Error("No hay sal configurada. ¿Hay usuarios?");
+      const key = await Crypto.deriveKey(password, saltHex);
+      // Verificar intentando descifrar el blob actual
+      const blob = await getIdbValue(IDB_KEY);
+      if (blob && Crypto.isEncrypted(blob)) {
+        try {
+          await Crypto.decryptBytesWithKey(blob, key);
+        } catch (e) {
+          throw new Error("Contraseña incorrecta");
+        }
+      }
+      _encryptionKey = key;
+      try {
+        const b64 = await Crypto.exportKey(key);
+        sessionStorage.setItem(SESSION_KEY_KEY, b64);
+      } catch {}
+      return true;
+    },
+
+    /** Limpia la clave de memoria (logout) */
+    clearEncryptionKey() {
+      _encryptionKey = null;
+      try { sessionStorage.removeItem(SESSION_KEY_KEY); } catch {}
+    },
+
+    /* ---------- DB pública ---------- */
     listChildren() {
       return exec("SELECT * FROM children ORDER BY createdAt ASC");
     },
@@ -541,12 +703,33 @@ const Storage = (function () {
 
     exportJSON() {
       const out = {
-        version: "v3-sqlite",
+        version: "v4-encrypted",
         exportedAt: new Date().toISOString(),
+        encrypted: false,
         children: this.listChildren().map(c => hydrateChild(c)),
         settings: this.getSettings(),
       };
       return JSON.stringify(out, null, 2);
+    },
+    /**
+     * Exporta los datos cifrados con una password.
+     * Devuelve un string base64 listo para descargar.
+     */
+    async exportEncryptedJSON(password) {
+      const out = {
+        version: "v4-encrypted",
+        exportedAt: new Date().toISOString(),
+        children: this.listChildren().map(c => hydrateChild(c)),
+        settings: this.getSettings(),
+      };
+      const plain = JSON.stringify(out);
+      const cipherB64 = await Crypto.encryptTextWithPassword(plain, password);
+      return JSON.stringify({
+        version: "v4-encrypted",
+        encrypted: true,
+        exportedAt: out.exportedAt,
+        payload: cipherB64,
+      }, null, 2);
     },
     importJSON(text) {
       const data = JSON.parse(text);
@@ -556,6 +739,28 @@ const Storage = (function () {
       persist();
       return data;
     },
+    /**
+     * Importa un backup (cifrado o no). Si está cifrado, requiere la password.
+     */
+    async importJSONAuto(text, password) {
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error("Archivo inválido");
+      }
+      if (data.encrypted && data.payload) {
+        if (!password) throw new Error("Backup cifrado, se requiere contraseña");
+        const plain = await Crypto.decryptTextWithPassword(data.payload, password);
+        data = JSON.parse(plain);
+      }
+      this.clearAll();
+      (data.children || []).forEach(c => insertChildFromLegacy(c));
+      if (data.settings) this.setSettings(data.settings);
+      await persistNow();
+      return data;
+    },
+    persistNow,
     clearAll() {
       db.exec(`
         DELETE FROM visits; DELETE FROM measurements; DELETE FROM vaccines;
