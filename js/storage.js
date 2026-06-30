@@ -21,6 +21,7 @@ const Storage = (function () {
   let _ready = null;
   let _encryptionKey = null; // CryptoKey en memoria
   let _persistDebounce = null;
+  let _dbLocked = false; // true si la DB está cifrada y no tenemos clave (no persistir)
   const PERSIST_DEBOUNCE_MS = 250;
 
   function uid() {
@@ -65,24 +66,41 @@ const Storage = (function () {
       await loadEncryptionKeyFromSession();
 
       // Cargar DB existente (puede ser cifrada o no)
-      let buf;
+      let buf = null;
+      let dbEncrypted = false;
       try {
+        // Primero ver si la DB es cifrada
+        const rawBlob = await getIdbValue(IDB_KEY);
+        if (rawBlob) {
+          dbEncrypted = Crypto.isEncrypted(rawBlob);
+        }
         buf = await loadFromIDB();
       } catch (e) {
-        // Si el blob está cifrado y no tenemos clave, loadFromIDB devuelve null
-        console.warn("[Storage] No se pudo cargar DB (puede estar cifrada sin clave):", e.message);
-        buf = null;
+        console.warn("[Storage] No se pudo cargar DB:", e.message);
       }
 
       if (buf) {
         db = new SQL.Database(buf);
         createSchema();
       } else {
-        // DB vacía (primera vez, o sin clave para descifrar)
-        db = new SQL.Database();
-        createSchema();
-        // Si hay datos legacy en localStorage, migrar
-        await migrateFromLocalStorage();
+        // DB no se pudo cargar. Razones posibles:
+        // 1. Primera vez (no hay blob) → crear vacía
+        // 2. DB cifrada sin clave → NO crear vacía (perderíamos datos)
+        // 3. Error de descifrado → NO crear vacía
+        const rawBlob = await getIdbValue(IDB_KEY);
+        if (rawBlob && dbEncrypted && !_encryptionKey) {
+          // DB cifrada y no tenemos clave → esperamos al login
+          // Creamos DB vacía EN MEMORIA pero marcamos que NO debe persistirse
+          db = new SQL.Database();
+          createSchema();
+          _dbLocked = true; // no persistir hasta tener clave
+          console.warn("[Storage] DB cifrada sin clave. Login para desbloquear.");
+        } else {
+          // DB vacía (primera vez o legacy)
+          db = new SQL.Database();
+          createSchema();
+          await migrateFromLocalStorage();
+        }
       }
     })();
     return _ready;
@@ -161,6 +179,7 @@ const Storage = (function () {
 
   async function saveToIDB() {
     if (!db) return;
+    if (_dbLocked) return; // DB cifrada sin clave, no persistir (perderíamos datos)
     try {
       const data = db.export();
       let blobToSave;
@@ -453,6 +472,7 @@ const Storage = (function () {
       }
       const key = await Crypto.deriveKey(password, saltHex);
       _encryptionKey = key;
+      _dbLocked = false;
       // Cachear en sessionStorage
       try {
         const b64 = await Crypto.exportKey(key);
@@ -485,6 +505,7 @@ const Storage = (function () {
         }
       }
       _encryptionKey = key;
+      _dbLocked = false;
       try {
         const b64 = await Crypto.exportKey(key);
         sessionStorage.setItem(SESSION_KEY_KEY, b64);
