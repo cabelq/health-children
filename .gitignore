@@ -43,3 +43,9 @@ Desktop.ini
 test-*.js
 *.tmp
 *.bak
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example
